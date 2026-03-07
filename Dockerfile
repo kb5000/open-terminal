@@ -32,6 +32,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+# Docker CLI + Compose + Buildx (mount socket at runtime for access)
+RUN curl -fsSL https://get.docker.com | sh
+
 WORKDIR /app
 
 RUN pip install --no-cache-dir \

@@ -59,6 +59,20 @@ docker run -d --name open-terminal -p 8000:8000 \
 > [!NOTE]
 > Packages are installed each time the container starts, so startup will take longer with large package lists. For heavy customization, build a custom image instead.
 
+#### Docker Access
+
+The image includes the Docker CLI, Compose, and Buildx. To let agents build images, run containers, etc., mount the host's Docker socket:
+
+```bash
+docker run -d --name open-terminal -p 8000:8000 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v open-terminal:/home/user \
+  ghcr.io/open-webui/open-terminal
+```
+
+> [!CAUTION]
+> Mounting the Docker socket gives the container full access to the host's Docker daemon. Only do this in trusted environments.
+
 For full control, fork the repo, edit the [Dockerfile](Dockerfile), and build your own image:
 
 ```bash
