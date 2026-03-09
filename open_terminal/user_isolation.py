@@ -8,6 +8,7 @@ kernel-enforced isolation between users.
 
 import hashlib
 import logging
+import os
 import platform
 import pwd
 import re
@@ -68,7 +69,9 @@ def sanitize_username(user_id: str) -> str:
 def ensure_os_user(username: str) -> str:
     """Create the OS user if it doesn't exist (idempotent).
 
-    Sets ``chmod 700`` on the home directory so other users cannot read it.
+    Sets ``chmod 750`` on the home directory and adds the server process
+    user to the new user's primary group.  This allows native Python I/O
+    for reads while other provisioned users still get ``Permission denied``.
     Returns the home directory path.
     """
     try:
@@ -85,10 +88,37 @@ def ensure_os_user(username: str) -> str:
     )
     home_dir = f"/home/{username}"
     subprocess.run(
-        ["sudo", "chmod", "700", home_dir],
+        ["sudo", "chmod", "750", home_dir],
         check=True,
         capture_output=True,
     )
+    # Add the server process user to the new user's group so Python can
+    # read files natively without subprocess.
+    server_user = os.getenv("USER", "user")
+    subprocess.run(
+        ["sudo", "usermod", "-aG", username, server_user],
+        check=True,
+        capture_output=True,
+    )
+    # Refresh the running process's supplementary group list so the new
+    # group takes effect immediately (normally requires re-login).
+    import ctypes
+    import ctypes.util
+    import grp
+
+    pw = pwd.getpwnam(server_user)
+    group_ids = sorted({
+        g.gr_gid for g in grp.getgrall() if server_user in g.gr_mem
+    } | {pw.pw_gid})
+    try:
+        os.setgroups(group_ids)
+    except PermissionError:
+        # Container user may lack CAP_SETGID.  The group will take effect
+        # after the next process restart; log a warning and continue.
+        log.warning(
+            "Could not refresh supplementary groups (missing CAP_SETGID). "
+            "Restart the server for group changes to take effect."
+        )
     return home_dir
 
 

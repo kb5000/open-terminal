@@ -52,6 +52,13 @@ COPY . .
 RUN pip install --no-cache-dir .
 
 RUN useradd -m -s /bin/bash user && echo 'user ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers
+
+# Grant CAP_SETGID to Python so the server can refresh supplementary groups
+# at runtime when provisioning new users in multi-user mode.
+RUN apt-get update && apt-get install -y --no-install-recommends libcap2-bin \
+    && rm -rf /var/lib/apt/lists/* \
+    && setcap cap_setgid+ep $(readlink -f $(which python3))
+
 USER user
 ENV SHELL=/bin/bash
 ENV PATH="/home/user/.local/bin:${PATH}"
