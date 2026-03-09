@@ -24,8 +24,15 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
 
-from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_NOTEBOOKS, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, LOG_DIR, MAX_TERMINAL_SESSIONS, TERMINAL_TERM
+from open_terminal.env import API_KEY, BINARY_FILE_MIME_PREFIXES, CORS_ALLOWED_ORIGINS, ENABLE_NOTEBOOKS, ENABLE_TERMINAL, EXECUTE_DESCRIPTION, EXECUTE_TIMEOUT, LOG_DIR, MAX_TERMINAL_SESSIONS, MULTI_USER, TERMINAL_TERM
 from open_terminal.runner import PipeRunner, ProcessRunner, create_runner
+
+if MULTI_USER:
+    from open_terminal.user_isolation import (
+        check_environment, resolve_user,
+        sudo_mkdir, sudo_mv, sudo_rm, sudo_write_file,
+    )
+    check_environment()
 
 try:
     import fcntl
@@ -66,6 +73,21 @@ async def verify_api_key(
         return
     if not credentials or credentials.credentials != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API key")
+
+
+def get_user_context(request: Request) -> tuple[str | None, str | None]:
+    """Resolve the OS user context for multi-user mode.
+
+    Reads the ``X-User-Id`` header (set by the OWUI proxy) and provisions
+    a per-user Linux account if needed.  Returns ``(username, home_dir)``
+    when multi-user mode is active, or ``(None, None)`` otherwise.
+    """
+    if not MULTI_USER:
+        return None, None
+    user_id = request.headers.get("x-user-id")
+    if not user_id:
+        return None, None
+    return resolve_user(user_id)
 
 
 app = FastAPI(
@@ -358,8 +380,9 @@ async def get_config():
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
-async def get_cwd():
-    return {"cwd": os.getcwd()}
+async def get_cwd(request: Request):
+    run_as_user, user_home = get_user_context(request)
+    return {"cwd": user_home if run_as_user else os.getcwd()}
 
 
 @app.post(
@@ -550,13 +573,17 @@ async def view_file(
         401: {"description": "Invalid or missing API key."},
     },
 )
-async def write_file(request: WriteRequest):
+async def write_file(http_request: Request, request: WriteRequest):
+    run_as_user, _ = get_user_context(http_request)
     target = os.path.abspath(request.path)
     try:
-        await aiofiles.os.makedirs(os.path.dirname(target), exist_ok=True)
-        async with aiofiles.open(target, "w", encoding="utf-8") as f:
-            await f.write(request.content)
-    except OSError as e:
+        if run_as_user:
+            await sudo_write_file(run_as_user, target, request.content)
+        else:
+            await aiofiles.os.makedirs(os.path.dirname(target), exist_ok=True)
+            async with aiofiles.open(target, "w", encoding="utf-8") as f:
+                await f.write(request.content)
+    except (OSError, subprocess.CalledProcessError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"path": target, "size": len(request.content.encode())}
 
@@ -566,11 +593,15 @@ async def write_file(request: WriteRequest):
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
-async def mkdir(request: MkdirRequest):
+async def mkdir(http_request: Request, request: MkdirRequest):
+    run_as_user, _ = get_user_context(http_request)
     target = os.path.abspath(request.path)
     try:
-        await aiofiles.os.makedirs(target, exist_ok=True)
-    except OSError as e:
+        if run_as_user:
+            await sudo_mkdir(run_as_user, target)
+        else:
+            await aiofiles.os.makedirs(target, exist_ok=True)
+    except (OSError, subprocess.CalledProcessError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"path": target}
 
@@ -581,19 +612,24 @@ async def mkdir(request: MkdirRequest):
     dependencies=[Depends(verify_api_key)],
 )
 async def delete_entry(
+    http_request: Request,
     path: str = Query(..., description="Path to delete."),
 ):
+    run_as_user, _ = get_user_context(http_request)
     target = os.path.abspath(path)
     if not await aiofiles.os.path.exists(target):
         raise HTTPException(status_code=404, detail="Path not found")
 
     is_dir = await aiofiles.os.path.isdir(target)
     try:
-        if is_dir:
-            await asyncio.to_thread(shutil.rmtree, target)
+        if run_as_user:
+            await sudo_rm(run_as_user, target)
         else:
-            await aiofiles.os.remove(target)
-    except OSError as e:
+            if is_dir:
+                await asyncio.to_thread(shutil.rmtree, target)
+            else:
+                await aiofiles.os.remove(target)
+    except (OSError, subprocess.CalledProcessError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"path": target, "type": "directory" if is_dir else "file"}
 
@@ -603,7 +639,8 @@ async def delete_entry(
     include_in_schema=False,
     dependencies=[Depends(verify_api_key)],
 )
-async def move_entry(request: MoveRequest):
+async def move_entry(http_request: Request, request: MoveRequest):
+    run_as_user, _ = get_user_context(http_request)
     source = os.path.abspath(request.source)
     destination = os.path.abspath(request.destination)
 
@@ -618,8 +655,11 @@ async def move_entry(request: MoveRequest):
         raise HTTPException(status_code=409, detail="Destination already exists")
 
     try:
-        await asyncio.to_thread(shutil.move, source, destination)
-    except OSError as e:
+        if run_as_user:
+            await sudo_mv(run_as_user, source, destination)
+        else:
+            await asyncio.to_thread(shutil.move, source, destination)
+    except (OSError, subprocess.CalledProcessError) as e:
         raise HTTPException(status_code=400, detail=str(e))
     return {"source": source, "destination": destination}
 
@@ -970,6 +1010,7 @@ async def list_processes():
     },
 )
 async def execute(
+    http_request: Request,
     request: ExecRequest,
     wait: Optional[float] = Query(
         None,
@@ -983,8 +1024,13 @@ async def execute(
         ge=1,
     ),
 ):
+    run_as_user, user_home = get_user_context(http_request)
+    cwd = request.cwd or (user_home if run_as_user else None)
+
     subprocess_env = {**os.environ, **request.env} if request.env else None
-    runner = await create_runner(request.command, request.cwd, subprocess_env)
+    runner = await create_runner(
+        request.command, cwd, subprocess_env, run_as_user=run_as_user
+    )
 
     process_id = uuid.uuid4().hex[:12]
     log_path = os.path.join(LOG_DIR, "processes", f"{process_id}.jsonl")
@@ -1324,15 +1370,22 @@ if ENABLE_TERMINAL:
             try:
                 fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
 
-                shell = os.environ.get("SHELL", "/bin/sh")
+                run_as_user, user_home = get_user_context(request)
+                if run_as_user:
+                    shell_cmd = ["sudo", "-u", run_as_user, "--", "/bin/bash"]
+                    cwd = None  # sudo handles the user context; parent can't chdir into 700 dirs
+                else:
+                    shell_cmd = [os.environ.get("SHELL", "/bin/sh")]
+                    cwd = os.getcwd()
+
                 spawn_env = os.environ.copy()
                 spawn_env.setdefault("TERM", TERMINAL_TERM)
                 process = subprocess.Popen(
-                    [shell],
+                    shell_cmd,
                     stdin=slave_fd,
                     stdout=slave_fd,
                     stderr=slave_fd,
-                    cwd=os.getcwd(),
+                    cwd=cwd,
                     env=spawn_env,
                     start_new_session=True,
                 )

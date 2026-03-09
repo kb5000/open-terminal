@@ -1,6 +1,6 @@
 [project]
 name = "open-terminal"
-version = "0.10.2"
+version = "0.11.0"
 description = "A remote terminal API."
 readme = "README.md"
 authors = [
@@ -32,3 +32,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["open_terminal"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import shlex
 import signal
 import subprocess
 import time
@@ -56,7 +57,12 @@ class ProcessRunner(ABC):
 class PtyRunner(ProcessRunner):
     """Spawn a command under a pseudo-terminal (Unix)."""
 
-    def __init__(self, command: str, cwd: str | None, env: dict | None):
+    def __init__(self, command: str, cwd: str | None, env: dict | None, run_as_user: str | None = None):
+        if run_as_user:
+            # Build the inner command: optionally cd first, then run the command.
+            inner = f"cd {shlex.quote(cwd)} && {command}" if cwd else command
+            command = f"sudo -u {shlex.quote(run_as_user)} -- bash -c {shlex.quote(inner)}"
+            cwd = None  # Popen runs as parent user — can't chdir into chmod 700 dirs
         master_fd, slave_fd = pty.openpty()
         try:
             # Set a reasonable default window size (80x24).
@@ -265,10 +271,15 @@ class WinPtyRunner(ProcessRunner):
         self._pty.setwinsize(rows, cols)
 
 
-async def create_runner(command: str, cwd: str | None, env: dict | None) -> ProcessRunner:
+async def create_runner(
+    command: str,
+    cwd: str | None,
+    env: dict | None,
+    run_as_user: str | None = None,
+) -> ProcessRunner:
     """Factory: create a PTY runner on Unix, WinPTY runner on Windows, or pipe fallback."""
     if _PTY_AVAILABLE:
-        return PtyRunner(command, cwd, env)
+        return PtyRunner(command, cwd, env, run_as_user=run_as_user)
     if _WINPTY_AVAILABLE:
         return WinPtyRunner(command, cwd, env)
     runner = PipeRunner(command, cwd, env)

@@ -93,6 +93,17 @@ ENABLE_NOTEBOOKS = os.environ.get(
     "OPEN_TERMINAL_ENABLE_NOTEBOOKS",
     str(config.get("enable_notebooks", True)),
 ).lower() not in ("false", "0", "no")
+
+MULTI_USER = os.environ.get(
+    "OPEN_TERMINAL_MULTI_USER",
+    str(config.get("multi_user", False)),
+).lower() not in ("false", "0", "no", "")
+
+USER_PREFIX = os.environ.get(
+    "OPEN_TERMINAL_USER_PREFIX",
+    config.get("user_prefix", ""),
+)
+
 UVICORN_LOOP = os.environ.get(
     "OPEN_TERMINAL_UVICORN_LOOP",
     config.get("uvicorn_loop", "auto"),

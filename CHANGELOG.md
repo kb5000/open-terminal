@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.0] - 2026-03-09
+
+### Added
+
+- 👥 **Multi-user mode** (`OPEN_TERMINAL_MULTI_USER=true`) — per-user OS accounts inside a single container, with standard Unix permissions (`chmod 700`) providing kernel-enforced isolation between users. When enabled, Open Terminal reads the `X-User-Id` header (set by the Open WebUI proxy), provisions a dedicated Linux user on first access via `useradd`, and runs all commands, file operations, and terminal sessions as that user via `sudo -u`. No Docker socket, no per-user containers, no enterprise license required. Fails fast with a clear error on non-Linux platforms. ([#38](https://github.com/open-webui/open-terminal/issues/38))
+- ⚙️ **`OPEN_TERMINAL_UVICORN_LOOP`** — environment variable (or `uvicorn_loop` in config.toml) to configure the Uvicorn event loop implementation. Defaults to `auto`.
+
 ## [0.10.2] - 2026-03-06
 
 ### Added
