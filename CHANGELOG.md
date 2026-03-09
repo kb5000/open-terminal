@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.11.5] - 2026-03-09
+
+### Fixed
+
+- 🐛 **Terminal PTY warnings** — wrapped multi-user terminal sessions with `script -qc` for proper PTY allocation, eliminating `cannot set terminal process group` and `no job control` warnings.
+- 🐛 **Stale home directory ownership** — added `chown` after `useradd` to handle pre-existing home directories with mismatched UID/GID from previous container runs.
+
+### Changed
+
+- 📖 **README** — updated multi-user documentation with accurate description and production warning.
+
 ## [0.11.4] - 2026-03-09
 
 ### Added

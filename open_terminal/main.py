@@ -1348,7 +1348,11 @@ if ENABLE_TERMINAL:
 
                 fs = get_filesystem(request)
                 if fs.username:
-                    shell_cmd = ["sudo", "-i", "-u", fs.username]
+                    shell_cmd = [
+                        "script", "-qc",
+                        f"sudo -i -u {fs.username}",
+                        "/dev/null",
+                    ]
                     cwd = fs.home
                 else:
                     shell_cmd = [os.environ.get("SHELL", "/bin/sh")]
